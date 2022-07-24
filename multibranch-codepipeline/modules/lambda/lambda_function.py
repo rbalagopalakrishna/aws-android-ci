@@ -9,11 +9,11 @@ from botocore.exceptions import ClientError
 codecommit_client = boto3.client('codecommit')
 codepipeline_client = boto3.client('codepipeline')
 
-repository_name = 'Dev-Dt-Android'
-account_number = '323144884758'
+repository_name = ''
+account_number = ''
 role = 'codepipeline-android-service-role'
 region = 'ap-south-1'
-s3_android_dev_bucket = 'dt-android'
+s3_android_dev_bucket = ''
 
 pipeline_configuration = {
     "pipeline": {
