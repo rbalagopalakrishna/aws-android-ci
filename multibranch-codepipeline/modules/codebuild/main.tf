@@ -119,7 +119,7 @@ resource "aws_codebuild_project" "codebuild_project" {
 
   source {
     type            = "CODECOMMIT"
-    location        = "https://git-codecommit.ap-south-1.amazonaws.com/v1/repos/Dev-Dt-Android"
+    location        = "code_commit_url"
     buildspec       = "buildspec/build_gradlew.yaml"
     git_clone_depth = 1
   }
@@ -165,7 +165,7 @@ resource "aws_codebuild_project" "codebuild_project_master" {
 
   source {
     type            = "CODECOMMIT"
-    location        = "https://git-codecommit.ap-south-1.amazonaws.com/v1/repos/Dev-Dt-Android"
+    location        = "codecommit_url"
     buildspec       = "buildspec/build_gradlew.yaml"
     git_clone_depth = 1
   }
