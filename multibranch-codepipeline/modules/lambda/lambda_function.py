@@ -11,15 +11,15 @@ codecommit_client = boto3.client('codecommit')
 codepipeline_client = boto3.client('codepipeline')
 codebuild_client = boto3.client('codebuild')
 
-repository_name = ''
-account_number = ''
+repository_name = 'Dev-Dt-Android'
+account_number = '323144884758'
 role = 'codepipeline-android-service-role'
 region = 'ap-south-1'
-s3_android_bucket_development = ''
-s3_android_bucket_builds = ''
-s3_android_bucket_release = ''
-device_farm_project_id = ''
-device_farm_device_pool_arn = ''
+s3_android_bucket_development = 'dt-android-source'
+s3_android_bucket_builds = 'dt-android-builds'
+s3_android_bucket_release = 'dt-android-release'
+device_farm_project_id = '1637fcfa-4c58-421f-8343-0910238eae7b'
+device_farm_device_pool_arn = 'arn:aws:devicefarm:us-west-2::devicepool:082d10e5-d7d7-48a5-ba5c-b33d66efa1f5'
 
 pipeline_configuration = {
     "pipeline": {
@@ -126,7 +126,7 @@ pipeline_configuration = {
                             "FuzzEventCount": "6000",
                             "FuzzEventThrottle": "50",
                             "ProjectId": device_farm_project_id,
-                            "TestType": "BUILTIN_FUZZ"
+                            "TestType": "BUILTIN_EXPLORER"
                         },
                         "outputArtifacts": [],
                         "inputArtifacts": [
@@ -253,12 +253,14 @@ def branch_events(message, event_ytpe):
                 
                 if build_execution_status == 'Succeeded':
                     print('Stage Build Succeeded.')
+                    print(build_url)
                     #delete_pipeline(pipeline_name)
                     break
                 
                 elif build_execution_status == 'Failed':
                     print(pipeline_build_status['stageStates'][1]['actionStates'][0]['latestExecution']['errorDetails']['message'])
-                    delete_pipeline(pipeline_name)
+                    print(build_url)
+                    #delete_pipeline(pipeline_name)
                     break
                 
                 else:
@@ -275,7 +277,7 @@ def branch_events(message, event_ytpe):
                     print('Stage '+pipeline_deploy_status['stageStates'][2]['actionStates'][0]['latestExecution']['summary'])
                     build_path = pipeline_deploy_status['stageStates'][2]['actionStates'][0]['latestExecution']['externalExecutionId']
                     print(build_path)
-                    apk_s3_location = 'https://'+region+'.console.aws.amazon.com/s3/buckets/android-builds?region='+region+'&prefix='+commit_id+'/&showversions=false'
+                    apk_s3_location = 'https://'+region+'.console.aws.amazon.com/s3/buckets/dt-android-builds?region='+region+'&prefix='+commit_id+'/&showversions=false'
                     print('Download APK file from :: {}'.format(apk_s3_location))
                     break
                 elif deploy_execution_status == 'Failed':
@@ -289,13 +291,13 @@ def branch_events(message, event_ytpe):
             count = 0
             while count < 500:
                 pipeline_deploy_status = get_status(pipeline_name)
-                deploy_execution_status = pipeline_deploy_status['stageStates'][3]['latestExecution']['status']
-                if deploy_execution_status == 'Succeeded':
+                test_execution_status = pipeline_deploy_status['stageStates'][3]['latestExecution']['status']
+                if test_execution_status == 'Succeeded':
                     print('Stage '+pipeline_deploy_status['stageStates'][3]['actionStates'][0]['latestExecution']['summary'])
                     devicefarm_url = pipeline_deploy_status['stageStates'][3]['actionStates'][0]['latestExecution']['externalExecutionUrl']
                     print(devicefarm_url)
                     break
-                elif deploy_execution_status == 'Failed':
+                elif test_execution_status == 'Failed':
                     print('Stage Deploy failed')
                     break
                 else:
@@ -397,7 +399,7 @@ def pr_events(message, event_ytpe):
                             print('Stage '+pipeline_deploy_status['stageStates'][2]['actionStates'][0]['latestExecution']['summary'])
                             build_path = pipeline_deploy_status['stageStates'][2]['actionStates'][0]['latestExecution']['externalExecutionId']
                             print(build_path)
-                            apk_s3_location = 'https://'+region+'.console.aws.amazon.com/s3/buckets/android-builds?region='+region+'&prefix='+commit_id+'/&showversions=false'
+                            apk_s3_location = 'https://'+region+'.console.aws.amazon.com/s3/buckets/dt-android-builds?region='+region+'&prefix='+commit_id+'/&showversions=false'
                             print('Download APK file from :: {}'.format(apk_s3_location))
                             content = u'\u2705'+' Stage Deploy Passed - See the [Artifactory]({0})'.format(apk_s3_location)
                             post_comment(pr_id, repository_name,
@@ -415,8 +417,8 @@ def pr_events(message, event_ytpe):
                     count = 0
                     while count < 500:
                         pipeline_deploy_status = get_status(pipeline_name)
-                        deploy_execution_status = pipeline_deploy_status['stageStates'][3]['latestExecution']['status']
-                        if deploy_execution_status == 'Succeeded':
+                        test_execution_status = pipeline_deploy_status['stageStates'][3]['latestExecution']['status']
+                        if test_execution_status == 'Succeeded':
                             summary = pipeline_deploy_status['stageStates'][3]['actionStates'][0]['latestExecution']['summary']
                             print('Stage '+summary)
                             devicefarm_url = pipeline_deploy_status['stageStates'][3]['actionStates'][0]['latestExecution']['externalExecutionUrl']
@@ -426,7 +428,7 @@ def pr_events(message, event_ytpe):
                                          source_commit, destination_commit,
                                          content)
                             break
-                        elif deploy_execution_status == 'Failed':
+                        elif test_execution_status == 'Failed':
                             print('Stage Deploy failed')
                             break
                         else:
