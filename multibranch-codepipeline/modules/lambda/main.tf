@@ -20,7 +20,7 @@ EOF
 
 resource "aws_cloudwatch_log_group" "cloudwatch_log_group_events" {
   name              = "/aws/lambda/${var.lambda_function_name}"
-  retention_in_days = 14
+  retention_in_days = 0
 }
 
 resource "aws_iam_policy" "lambda_logging" {
@@ -77,6 +77,7 @@ EOF
 resource "aws_iam_role_policy_attachment" "lambda_logs" {
   role       = aws_iam_role.iam_for_android_lambda_events.name
   policy_arn = aws_iam_policy.lambda_logging.arn
+  #policy_arn = "arn:aws:iam::323144884758:policy/Accenture_Devops_policy"
 }
 
 resource "aws_lambda_function" "events" {
@@ -96,6 +97,8 @@ resource "aws_lambda_function" "events" {
   ephemeral_storage {
     size = 512 # Min 512 MB and the Max 10240 MB
   }
+
+  timeout = 900
 
   environment {
     variables = {

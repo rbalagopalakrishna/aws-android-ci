@@ -19,42 +19,43 @@ resource "aws_iam_role" "codepipeline_role" {
 
 }
 
-resource "aws_iam_policy" "codepipeline_policy" {
-  name        = "codepipeline-android-policy"
-  description = "policy for codepipeline-android-service-role"
-
-  policy = <<EOF
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Action": [
-        "codecommit:*"
-      ],
-      "Effect": "Allow",
-      "Resource": "*"
-    },
-    {
-      "Action": [
-        "s3:*",
-        "s3-object-lambda:*"
-      ],
-      "Effect": "Allow",
-      "Resource": "*"
-    },
-    {
-      "Action": [
-        "codebuild:*"
-      ],
-      "Effect": "Allow",
-      "Resource": "*"
-    }
-  ]
-}
-EOF
-}
+#resource "aws_iam_policy" "codepipeline_policy" {
+#  name        = "codepipeline-android-policy"
+#  description = "policy for codepipeline-android-service-role"
+#
+#  policy = <<EOF
+#{
+#  "Version": "2012-10-17",
+#  "Statement": [
+#    {
+#      "Action": [
+#        "codecommit:*"
+#      ],
+#      "Effect": "Allow",
+#      "Resource": "*"
+#    },
+#    {
+#      "Action": [
+#        "s3:*",
+#        "s3-object-lambda:*"
+#      ],
+#      "Effect": "Allow",
+#      "Resource": "*"
+#    },
+#    {
+#      "Action": [
+#        "codebuild:*"
+#      ],
+#      "Effect": "Allow",
+#      "Resource": "*"
+#    }
+#  ]
+#}
+#EOF
+#}
 
 resource "aws_iam_role_policy_attachment" "test-attach" {
   role       = aws_iam_role.codepipeline_role.name
-  policy_arn = aws_iam_policy.codepipeline_policy.arn
+  #policy_arn = aws_iam_policy.codepipeline_policy.arn
+  policy_arn = "arn:aws:iam::323144884758:policy/Accenture_Devops_policy"
 }

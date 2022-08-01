@@ -44,6 +44,7 @@ resource "aws_codestarnotifications_notification_rule" "notification_rule" {
   detail_type    = "BASIC"
   event_type_ids = [
 	"codecommit-repository-branches-and-tags-created",
+	"codecommit-repository-branches-and-tags-updated",
         "codecommit-repository-pull-request-created",
         "codecommit-repository-pull-request-merged",
 	"codecommit-repository-pull-request-source-updated"

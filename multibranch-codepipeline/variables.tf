@@ -7,5 +7,5 @@ variable "aws_region" {
 # Github Repository Project Name
 
 variable "git_repository_name" {
-  default = ""
+  default = "Dev-Dt-Android"
 }
