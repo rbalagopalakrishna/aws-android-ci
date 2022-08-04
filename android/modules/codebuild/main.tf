@@ -1,13 +1,13 @@
 resource "aws_s3_bucket" "bucket" {
-  bucket = "dt-android-source"
+  bucket = "android-source"
 }
 
 resource "aws_s3_bucket" "android_apk_build_bucket" {
-  bucket = "dt-android-builds"
+  bucket = "android-builds"
 }
 
 resource "aws_s3_bucket" "android_apk_release_bucket" {
-  bucket = "dt-android-release"
+  bucket = "android-release"
 }
 
 resource "aws_s3_bucket_acl" "aws_bucket_acl" {
@@ -99,7 +99,7 @@ resource "aws_codebuild_project" "codebuild_project" {
 #    name = "Dev-Dt-Android"
 #    path = "app/build/outputs/apk/debug/app-debug.apk"
 #    namespace_type = "BUILD_ID"
-#    location = "dt-android-application"
+#    location = "android-application"
 #    packaging = "ZIP"
 #  }
 
@@ -119,7 +119,7 @@ resource "aws_codebuild_project" "codebuild_project" {
 
   source {
     type            = "CODECOMMIT"
-    location        = "code_commit_url"
+    location        = ""
     buildspec       = "buildspec/build_gradlew.yaml"
     git_clone_depth = 1
   }
@@ -145,7 +145,7 @@ resource "aws_codebuild_project" "codebuild_project_master" {
 #    name = "Dev-Dt-Android"
 #    path = "app/build/outputs/apk/debug/app-debug.apk"
 #    namespace_type = "BUILD_ID"
-#    location = "dt-android-application"
+#    location = "android-application"
 #    packaging = "ZIP"
 #  }
 
@@ -165,7 +165,7 @@ resource "aws_codebuild_project" "codebuild_project_master" {
 
   source {
     type            = "CODECOMMIT"
-    location        = "codecommit_url"
+    location        = ""
     buildspec       = "buildspec/build_gradlew.yaml"
     git_clone_depth = 1
   }
