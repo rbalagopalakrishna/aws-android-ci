@@ -11,7 +11,7 @@ codecommit_client = boto3.client('codecommit')
 codepipeline_client = boto3.client('codepipeline')
 
 # Repository name from codecommit
-repository_name = 'iOS'
+repository_name = ''
 
 # AWS account details
 account_number = ''
@@ -21,6 +21,7 @@ region = 'ap-south-1'
 # S3 bucket to store Source and Build Artifacts
 s3_ios_bucket_development = 'ios-source'
 s3_ios_bucket_release = 'ios-release'
+s3_ios_bucket_builds = 'ios-builds'
 
 # DeviceFarm Project and DevicePool arn to test the application
 device_farm_project_id = ''
@@ -85,35 +86,31 @@ pipeline_configuration = {
                 "name": "Build"
             },
             {
-                "name": "Test",
                 "actions": [
                     {
-                        "name": "TestDeviceFarm",
-                        "actionTypeId": {
-                            "category": "Test",
-                            "owner": "AWS",
-                            "provider": "DeviceFarm",
-                            "version": "1"
-                        },
                         "runOrder": 1,
-                        "configuration": {
-                            "App": "InstaTam.ipa",
-                            "AppType": "iOS",
-                            "DevicePoolArn": device_farm_device_pool_arn,
-                            "FuzzEventCount": "6000",
-                            "FuzzEventThrottle": "50",
-                            "ProjectId": device_farm_project_id,
-                            "TestType": "BUILTIN_FUZZ"
+                        "actionTypeId": {
+                            "category": "Deploy",
+                            "provider": "S3",
+                            "version": "1",
+                            "owner": "AWS"
                         },
+                        "name": "Deploy",
+                        "configuration": {
+                            "BucketName": s3_ios_bucket_builds,
+                            "ObjectKey": "MyWebsite",
+                            "Extract": "true"
+                            },
                         "outputArtifacts": [],
+                        "region": region,
                         "inputArtifacts": [
                             {
                                 "name": "BuildArtifact"
                             }
-                        ],
-                        "region": region
+                        ]
                     }
-                ]
+                ],
+                "name": "Deploy"
             },
         ],
         "artifactStore": {
@@ -125,6 +122,38 @@ pipeline_configuration = {
         "roleArn": 'arn:aws:iam::'+account_number+':role/service-role/'+role
     }
 }
+
+#            {
+#                "name": "Test",
+#                "actions": [
+#                    {
+#                        "name": "TestDeviceFarm",
+#                        "actionTypeId": {
+#                            "category": "Test",
+#                            "owner": "AWS",
+#                            "provider": "DeviceFarm",
+#                            "version": "1"
+#                        },
+#                        "runOrder": 1,
+#                        "configuration": {
+#                            "App": "InstaTam.ipa",
+#                            "AppType": "iOS",
+#                            "DevicePoolArn": device_farm_device_pool_arn,
+#                            "FuzzEventCount": "6000",
+#                            "FuzzEventThrottle": "50",
+#                            "ProjectId": device_farm_project_id,
+#                            "TestType": "BUILTIN_FUZZ"
+#                        },
+#                        "outputArtifacts": [],
+#                        "inputArtifacts": [
+#                            {
+#                                "name": "BuildArtifact"
+#                            }
+#                        ],
+#                        "region": region
+#                    }
+#                ]
+#            },
 
 def update_pipeline(code_pipeline_configuration, branch_ref, destination_branch=None):
     for stage in code_pipeline_configuration['pipeline']['stages']:
@@ -144,6 +173,17 @@ def get_status(pipeline_name):
     return pipeline_status
 
 
+def delete_pipeline(pipeline_name):
+    try:
+        print("Cleaning up, deleting pipeline %s" % pipeline_name)
+        codepipeline_client.delete_pipeline(name=pipeline_name)
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'PipelineNotFoundException':
+            print("Pipeline %s does not exist, nothing to do." % pipeline_name)
+        else:
+            print("Unexpected error: %s" % e)
+
+
 def create_pipeline(modified_pipeline_json):
     new_pipeline_response = codepipeline_client.create_pipeline(pipeline=modified_pipeline_json)
     return new_pipeline_response
@@ -155,13 +195,23 @@ def get_jenkins_build_number(pipeline_name):
         try:
             build_status = get_status(pipeline_name)
             build_url = build_status['stageStates'][1]['actionStates'][0]['latestExecution']['externalExecutionUrl']
-            print(build_url)
             break
         except KeyError:
             print('Waiting for build status.')
         count += 1
         time.sleep(2)
     return build_url
+
+
+def post_comment(pr_id, repository_name, source_commit,
+                 destination_commit, content):
+    codecommit_client.post_comment_for_pull_request(
+            pullRequestId=pr_id,
+            repositoryName=repository_name,
+            beforeCommitId=source_commit,
+            afterCommitId=destination_commit,
+            content=content
+        )
 
 
 # Beanch Events Ex: referenceCreated, referenceDeleted, referenceUpdated 
@@ -178,11 +228,26 @@ def branch_events(message, event_ytpe):
 
     code_pipeline_configuration = pipeline_configuration
     pipeline_name = branch_name + '-' + commit_id + '-pipeline'
+    code_pipeline_configuration['pipeline']['stages'][2]['actions'][0]['configuration']['ObjectKey'] = commit_id
     
     code_pipeline_configuration['pipeline']['name'] = pipeline_name
+    
+    if message['detail']['referenceType'] == 'tag':
+        code_pipeline_configuration['pipeline']['stages'][2]['actions'][0]['configuration']['BucketName'] = s3_ios_bucket_release
+        #code_pipeline_configuration['pipeline']['artifactStore']['location'] = s3_ios_bucket_release
+        # Use master branch for tags
+        branch_ref = 'mast'
+        global s3_ios_bucket_builds
+        s3_ios_bucket_builds = s3_ios_bucket_release
+
 
     modified_pipeline_json = update_pipeline(code_pipeline_configuration, branch_ref)
     print(modified_pipeline_json)
+    
+    # Delete existing pipeline before creating new one
+    delete_pipeline(pipeline_name)
+
+
     new_pipeline_response = create_pipeline(modified_pipeline_json)
 
     time.sleep(10)
@@ -226,6 +291,28 @@ def branch_events(message, event_ytpe):
                     count += 1
                     time.sleep(2)
 
+        elif stage['stageName'] == 'Deploy':
+            count = 0
+            while count < 500:
+                pipeline_deploy_status = get_status(pipeline_name)
+                try:
+                    deploy_execution_status = pipeline_deploy_status['stageStates'][2]['latestExecution']['status']
+                except KeyError:
+                    print('Waiting for deploy status.')
+                if deploy_execution_status == 'Succeeded':
+                    print('Stage '+pipeline_deploy_status['stageStates'][2]['actionStates'][0]['latestExecution']['summary'])
+                    build_path = pipeline_deploy_status['stageStates'][2]['actionStates'][0]['latestExecution']['externalExecutionId']
+                    print(build_path)
+                    ipa_s3_location = 'https://'+region+'.console.aws.amazon.com/s3/buckets/'+s3_ios_bucket_builds+'?region='+region+'&prefix='+commit_id+'/&showversions=false'
+                    print('Download IPA file from :: {}'.format(ipa_s3_location))
+                    break
+                elif deploy_execution_status == 'Failed':
+                    print('Stage Deploy failed')
+                    break
+                else:
+                    count += 1
+                    time.sleep(2)
+
         elif stage['stageName'] == 'Test':
             count = 0
             while count < 500:
@@ -237,7 +324,7 @@ def branch_events(message, event_ytpe):
                     print(devicefarm_url)
                     break
                 elif test_execution_status == 'Failed':
-                    print('Stage Deploy failed')
+                    print('Stage Test failed')
                     break
                 else:
                     count += 1
@@ -258,6 +345,9 @@ def pr_events(message, event_ytpe):
     destination_branch = message['detail']['destinationReference'].split('/')[-1]
     print("Destination Branch Reference :: %s" % destination_branch)
 
+    # Delete existing pipeline before creating new one
+    delete_pipeline(pipeline_name)
+
     try:
         pipeline_response = codepipeline_client.get_pipeline(name=pipeline_name)
     except ClientError as e:
@@ -272,6 +362,7 @@ def pr_events(message, event_ytpe):
             #code_pipeline_configuration['pipeline']['stages'][3]['actions'][0]['configuration']['App'] = source_commit+'/app-debug.apk'
 
             modified_pipeline_json = update_pipeline(code_pipeline_configuration, branch_ref, destination_branch)
+
             new_pipeline_response = create_pipeline(modified_pipeline_json)
 
             pipeline_url = 'https://'+region+'.console.aws.amazon.com/codesuite/codepipeline/pipelines/'+pipeline_name+'/view?region='+region
@@ -279,7 +370,7 @@ def pr_events(message, event_ytpe):
             post_comment(pr_id, repository_name, source_commit, destination_commit, content)
 
             # TO-DO get the comment ID and use it to post all other status updates
-            time.sleep(10)
+            time.sleep(5)
 
             pipeline_name = new_pipeline_response['pipeline']['name']
             pipeline_stages = get_status(pipeline_name)
@@ -329,6 +420,32 @@ def pr_events(message, event_ytpe):
                         else:
                             count += 1
                             time.sleep(10)
+
+                elif stage['stageName'] == 'Deploy':
+                    count = 0
+                    while count < 500:
+                        pipeline_deploy_status = get_status(pipeline_name)
+                        try:
+                            deploy_execution_status = pipeline_deploy_status['stageStates'][2]['latestExecution']['status']
+                        except KeyError:
+                            print('Waiting for deploy status.')
+                        if deploy_execution_status == 'Succeeded':
+                            print('Stage '+pipeline_deploy_status['stageStates'][2]['actionStates'][0]['latestExecution']['summary'])
+                            build_path = pipeline_deploy_status['stageStates'][2]['actionStates'][0]['latestExecution']['externalExecutionId']
+                            print(build_path)
+                            ipa_s3_location = 'https://'+region+'.console.aws.amazon.com/s3/buckets/dt-ios-builds?region='+region+'&prefix='+source_commit+'/&showversions=false'
+                            print('Download IPA file from :: {}'.format(ipa_s3_location))
+                            ccontent = u'\u2705'+' Stage Deploy Passed - See the [Artifactory]({0})'.format(ipa_s3_location)
+                            post_comment(pr_id, repository_name,
+                                         source_commit, destination_commit,
+                                         content)
+                            break
+                        elif deploy_execution_status == 'Failed':
+                            print('Stage Deploy failed')
+                            break
+                        else:
+                            count += 1
+                            time.sleep(2)
 
 
 def lambda_handler(event, context):
