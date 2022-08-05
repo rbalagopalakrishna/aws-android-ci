@@ -12,7 +12,7 @@ codepipeline_client = boto3.client('codepipeline')
 codebuild_client = boto3.client('codebuild')
 
 # Repository name from codecommit
-repository_name = 'Android'
+repository_name = 'Dev-Dt-Android'
 
 # AWS account details
 account_number = ''
@@ -229,14 +229,13 @@ def branch_events(message, event_ytpe):
         code_pipeline_configuration['pipeline']['stages'][2]['actions'][0]['configuration']['BucketName'] = s3_android_bucket_release
         # Use master branch for tags
         branch_ref = 'master'
+        global s3_android_bucket_builds
         s3_android_bucket_builds = s3_android_bucket_release
 
     modified_pipeline_json = update_pipeline(code_pipeline_configuration, branch_ref)
     print(modified_pipeline_json)
+
     delete_pipeline(pipeline_name)
-    
-    time.sleep(5)
-    
     new_pipeline_response = create_pipeline(modified_pipeline_json)
 
     time.sleep(10)
@@ -289,7 +288,7 @@ def branch_events(message, event_ytpe):
                     print('Stage '+pipeline_deploy_status['stageStates'][2]['actionStates'][0]['latestExecution']['summary'])
                     build_path = pipeline_deploy_status['stageStates'][2]['actionStates'][0]['latestExecution']['externalExecutionId']
                     print(build_path)
-                    apk_s3_location = 'https://'+region+'.console.aws.amazon.com/s3/buckets/android-builds?region='+region+'&prefix='+commit_id+'/&showversions=false'
+                    apk_s3_location = 'https://'+region+'.console.aws.amazon.com/s3/buckets/'+s3_android_bucket_builds+'?region='+region+'&prefix='+commit_id+'/&showversions=false'
                     print('Download APK file from :: {}'.format(apk_s3_location))
                     break
                 elif deploy_execution_status == 'Failed':
@@ -345,6 +344,7 @@ def pr_events(message, event_ytpe):
             code_pipeline_configuration['pipeline']['stages'][3]['actions'][0]['configuration']['App'] = source_commit+'/app-debug.apk'
             
             modified_pipeline_json = update_pipeline(code_pipeline_configuration, branch_ref, destination_branch)
+            delete_pipeline(pipeline_name)
             new_pipeline_response = create_pipeline(modified_pipeline_json)
 
             pipeline_url = 'https://'+region+'.console.aws.amazon.com/codesuite/codepipeline/pipelines/'+pipeline_name+'/view?region='+region
@@ -411,7 +411,7 @@ def pr_events(message, event_ytpe):
                             print('Stage '+pipeline_deploy_status['stageStates'][2]['actionStates'][0]['latestExecution']['summary'])
                             build_path = pipeline_deploy_status['stageStates'][2]['actionStates'][0]['latestExecution']['externalExecutionId']
                             print(build_path)
-                            apk_s3_location = 'https://'+region+'.console.aws.amazon.com/s3/buckets/android-builds?region='+region+'&prefix='+commit_id+'/&showversions=false'
+                            apk_s3_location = 'https://'+region+'.console.aws.amazon.com/s3/buckets/dt-android-builds?region='+region+'&prefix='+source_commit+'/&showversions=false'
                             print('Download APK file from :: {}'.format(apk_s3_location))
                             content = u'\u2705'+' Stage Deploy Passed - See the [Artifactory]({0})'.format(apk_s3_location)
                             post_comment(pr_id, repository_name,
@@ -457,4 +457,3 @@ def lambda_handler(event, context):
         branch_events(message, event_type)
     elif event_type == 'pullRequestCreated' or event_type == 'pullRequestSourceBranchUpdated':
         pr_events(message, event_type)
-
