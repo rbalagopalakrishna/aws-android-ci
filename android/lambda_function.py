@@ -12,7 +12,7 @@ codepipeline_client = boto3.client('codepipeline')
 codebuild_client = boto3.client('codebuild')
 
 # Repository name from codecommit
-repository_name = 'Dev-Dt-Android'
+repository_name = ''
 
 # AWS account details
 account_number = ''
