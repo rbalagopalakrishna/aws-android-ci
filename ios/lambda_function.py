@@ -169,8 +169,12 @@ def update_pipeline(code_pipeline_configuration, branch_ref, destination_branch=
 
 
 def get_status(pipeline_name):
-    pipeline_status = codepipeline_client.get_pipeline_state(name=pipeline_name)
-    return pipeline_status
+    try:
+        pipeline_status = codepipeline_client.get_pipeline_state(name=pipeline_name)
+        return pipeline_status
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'PipelineNotFoundException':
+            print("Pipeline %s does not exist." % pipeline_name)
 
 
 def delete_pipeline(pipeline_name):
@@ -180,13 +184,15 @@ def delete_pipeline(pipeline_name):
     except ClientError as e:
         if e.response['Error']['Code'] == 'PipelineNotFoundException':
             print("Pipeline %s does not exist, nothing to do." % pipeline_name)
-        else:
-            print("Unexpected error: %s" % e)
 
 
 def create_pipeline(modified_pipeline_json):
-    new_pipeline_response = codepipeline_client.create_pipeline(pipeline=modified_pipeline_json)
-    return new_pipeline_response
+    try:
+        new_pipeline_response = codepipeline_client.create_pipeline(pipeline=modified_pipeline_json)
+        return new_pipeline_response
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'PipelineNameInUseException':
+            print("A Pipeline with name  %s already exist, please delete the pipeline to create one." % pipeline_name)
 
 
 def get_jenkins_build_number(pipeline_name):
@@ -216,16 +222,12 @@ def post_comment(pr_id, repository_name, source_commit,
 
 # Beanch Events Ex: referenceCreated, referenceDeleted, referenceUpdated 
 def branch_events(message, event_ytpe):
-    print(message)
-    #reference_type = message['detail']['referenceType'] == 'branch' or 'tag'
     commit_id = message['detail']['commitId']
     print("Commit ID :: %s" % commit_id)
-    #branch_ref = '/'.join(message['detail']['referenceFullName'].split('/')[2:])
     branch_ref = message['detail']['referenceName']
-
-    branch_name = '-'.join(message['detail']['referenceName'].split('/'))
     print("Branch Name :: %s" % branch_ref)
-
+    
+    branch_name = '-'.join(message['detail']['referenceName'].split('/'))
     code_pipeline_configuration = pipeline_configuration
     pipeline_name = branch_name + '-' + commit_id + '-pipeline'
     code_pipeline_configuration['pipeline']['stages'][2]['actions'][0]['configuration']['ObjectKey'] = commit_id
@@ -234,20 +236,15 @@ def branch_events(message, event_ytpe):
     
     if message['detail']['referenceType'] == 'tag':
         code_pipeline_configuration['pipeline']['stages'][2]['actions'][0]['configuration']['BucketName'] = s3_ios_bucket_release
-        #code_pipeline_configuration['pipeline']['artifactStore']['location'] = s3_ios_bucket_release
         # Use master branch for tags
-        branch_ref = 'mast'
+        branch_ref = 'master'
         global s3_ios_bucket_builds
         s3_ios_bucket_builds = s3_ios_bucket_release
 
-
     modified_pipeline_json = update_pipeline(code_pipeline_configuration, branch_ref)
-    print(modified_pipeline_json)
     
     # Delete existing pipeline before creating new one
     delete_pipeline(pipeline_name)
-
-
     new_pipeline_response = create_pipeline(modified_pipeline_json)
 
     time.sleep(10)
@@ -271,20 +268,17 @@ def branch_events(message, event_ytpe):
             while count < 2000:
                 pipeline_build_status = get_status(pipeline_name)
                 build_execution_status = pipeline_build_status['stageStates'][1]['latestExecution']['status']
-                #print('Build status :: ', build_execution_status)
 
                 if build_execution_status == 'Succeeded':
                     print('Stage Jenkins Build Succeeded.')
                     jenkins_build_id = get_jenkins_build_number(pipeline_name)
                     print(jenkins_build_id)
-                    #delete_pipeline(pipeline_name)
                     break
 
                 elif build_execution_status == 'Failed':
                     print('Stage jenkins Build failed')
                     jenkins_build_id = get_jenkins_build_number(pipeline_name)
                     print(jenkins_build_id)
-                    #delete_pipeline(pipeline_name)
                     break
 
                 else:
@@ -358,8 +352,7 @@ def pr_events(message, event_ytpe):
 
             code_pipeline_configuration = pipeline_configuration
             code_pipeline_configuration['pipeline']['name'] = pipeline_name
-            #code_pipeline_configuration['pipeline']['stages'][2]['actions'][0]['configuration']['ObjectKey'] = source_commit
-            #code_pipeline_configuration['pipeline']['stages'][3]['actions'][0]['configuration']['App'] = source_commit+'/app-debug.apk'
+            code_pipeline_configuration['pipeline']['stages'][2]['actions'][0]['configuration']['ObjectKey'] = source_commit
 
             modified_pipeline_json = update_pipeline(code_pipeline_configuration, branch_ref, destination_branch)
 
@@ -398,11 +391,6 @@ def pr_events(message, event_ytpe):
                             post_comment(pr_id, repository_name,
                                          source_commit, destination_commit,
                                          content)
-
-                            #if destination_branch == 'master':
-                            #    print('Keeping the Master Branch Pipelines for reference.')
-                            #else:
-                            #    delete_pipeline(pipeline_name)
                             break
 
                         elif build_execution_status == 'Failed':
@@ -411,10 +399,6 @@ def pr_events(message, event_ytpe):
                             post_comment(pr_id, repository_name,
                                          source_commit, destination_commit,
                                          content)
-                            #if destination_branch == 'master':
-                            #    print('Keeping the Master Branch Pipelines for reference.')
-                            #else:
-                            #    delete_pipeline(pipeline_name)
                             break
 
                         else:
