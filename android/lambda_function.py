@@ -12,23 +12,151 @@ codepipeline_client = boto3.client('codepipeline')
 codebuild_client = boto3.client('codebuild')
 
 # Repository name from codecommit
-repository_name = ''
+repository_name = 'Dev-Dt-Android'
 
 # AWS account details
-account_number = ''
+account_number = '323144884758'
 role = 'codepipeline-android-service-role'
 region = 'ap-south-1'
 
 # S3 bucket to store Source and Build Artifacts
-s3_android_bucket_development = 'android-source'
-s3_android_bucket_builds = 'android-builds'
-s3_android_bucket_release = 'android-release'
+s3_android_bucket_development = 'dt-android-source'
+s3_android_bucket_builds = 'dt-android-builds'
+s3_android_bucket_release = 'dt-android-release'
 
 # DeviceFarm Project and DevicePool arn to test the application
-device_farm_project_id = ''
-device_farm_device_pool_arn = ''
+device_farm_project_id = '1637fcfa-4c58-421f-8343-0910238eae7b'
+device_farm_device_pool_arn = 'arn:aws:devicefarm:us-west-2::devicepool:082d10e5-d7d7-48a5-ba5c-b33d66efa1f5'
 
 pipeline_configuration = {
+    "pipeline": {
+        "stages": [
+            {
+                "actions": [
+                    {
+                        "runOrder": 1,
+                        "actionTypeId": {
+                            "category": "Source",
+                            "provider": "CodeCommit",
+                            "version": "1",
+                            "owner": "AWS"
+                        },
+                        "name": "Source",
+                        "outputArtifacts": [
+                            {
+                                "name": "SourceArtifact"
+                            }
+                        ],
+                        "configuration": {
+                            "BranchName": "",
+                            "OutputArtifactFormat": "CODE_ZIP",
+                            "PollForSourceChanges": "false",
+                            "RepositoryName": repository_name
+                        },
+                        "inputArtifacts": []
+                    }
+                ],
+                "name": "Source"
+            },
+            {
+                "actions": [
+                    {
+                        "runOrder": 1,
+                        "actionTypeId": {
+                            "category": "Build",
+                            "provider": "CodeBuild",
+                            "version": "1",
+                            "owner": "AWS"
+                        },
+                        "name": "CodeBuild",
+                        "outputArtifacts": [
+                            {
+                                "name": "BuildArtifact"
+                            }
+                        ],
+                        "configuration": {
+                            "BatchEnabled": "false",
+                            "ProjectName": ""
+                        },
+                        "inputArtifacts": [
+                            {
+                                "name": "SourceArtifact"
+                            }
+                        ]
+                    }
+                ],
+                "name": "Build"
+            },
+            {
+                "name": "Test",
+                "actions": [
+                    {
+                        "name": "TestDeviceFarm",
+                        "actionTypeId": {
+                            "category": "Test",
+                            "owner": "AWS",
+                            "provider": "DeviceFarm",
+                            "version": "1"
+                        },
+                        "runOrder": 1,
+                        "configuration": {
+                            "App": "app-debug.apk",
+                            "AppType": "Android",
+                            "DevicePoolArn": device_farm_device_pool_arn,
+                            "FuzzEventCount": "6000",
+                            "FuzzEventThrottle": "50",
+                            "ProjectId": device_farm_project_id,
+                            "TestType": "BUILTIN_FUZZ"
+                        },
+                        "outputArtifacts": [],
+                        "inputArtifacts": [
+                            {
+                                "name": "BuildArtifact"
+                            }
+                        ],
+                        "region": region
+                    }
+                ]
+            },
+            {
+                "actions": [
+                    {
+                        "runOrder": 1,
+                        "actionTypeId": {
+                            "category": "Deploy",
+                            "provider": "S3",
+                            "version": "1",
+                            "owner": "AWS"
+                        },
+                        "name": "Deploy",
+                        "configuration": {
+                            "BucketName": s3_android_bucket_builds,
+                            "ObjectKey": "MyWebsite",
+                            "Extract": "true"
+                            },
+                        "outputArtifacts": [],
+                        "region": region,
+                        "inputArtifacts": [
+                            {
+                                "name": "BuildArtifact"
+                            }
+                        ]
+                    }
+                ],
+                "name": "Deploy"
+            },
+        ],
+        "artifactStore": {
+            "type": "S3",
+            "location": s3_android_bucket_development
+        },
+        "name": "ci-pipeline",
+        "version": 1,
+        "roleArn": 'arn:aws:iam::'+account_number+':role/service-role/'+role
+    }
+}
+
+release_pipeline_configuration = {
     "pipeline": {
         "stages": [
             {
@@ -99,7 +227,7 @@ pipeline_configuration = {
                         },
                         "name": "Deploy",
                         "configuration": {
-                            "BucketName": s3_android_bucket_builds,
+                            "BucketName": s3_android_bucket_release,
                             "ObjectKey": "MyWebsite",
                             "Extract": "true"
                             },
@@ -115,35 +243,29 @@ pipeline_configuration = {
                 "name": "Deploy"
             },
             {
-                "name": "Test",
                 "actions": [
                     {
-                        "name": "TestDeviceFarm",
-                        "actionTypeId": {
-                            "category": "Test",
-                            "owner": "AWS",
-                            "provider": "DeviceFarm",
-                            "version": "1"
-                        },
                         "runOrder": 1,
-                        "configuration": {
-                            "App": "app-debug.apk",
-                            "AppType": "Android",
-                            "DevicePoolArn": device_farm_device_pool_arn,
-                            "FuzzEventCount": "6000",
-                            "FuzzEventThrottle": "50",
-                            "ProjectId": device_farm_project_id,
-                            "TestType": "BUILTIN_FUZZ"
+                        "actionTypeId": {
+                            "category": "Invoke",
+                            "provider": "Lambda",
+                            "version": "1",
+                            "owner": "AWS"
                         },
+                        "name": "Publish-AAB-To-Playstore",
+                        "configuration": {
+                            "FunctionName": "Publish-AAB-To-Playstore"
+                            },
                         "outputArtifacts": [],
+                        "region": region,
                         "inputArtifacts": [
                             {
                                 "name": "BuildArtifact"
                             }
-                        ],
-                        "region": region
+                        ]
                     }
-                ]
+                ],
+                "name": "Publish"
             },
         ],
         "artifactStore": {
@@ -188,12 +310,14 @@ def delete_pipeline(pipeline_name):
             print("Unexpected error: %s" % e)
 
 
-def update_pipeline(code_pipeline_configuration, branch_ref, destination_branch=None):
+def update_pipeline(message, code_pipeline_configuration, branch_ref, destination_branch=None):
     for stage in code_pipeline_configuration['pipeline']['stages']:
         if stage['name'] == 'Source':
             stage['actions'][0]['configuration']['BranchName'] = branch_ref
         elif stage['name'] == 'Build':
-            if destination_branch == 'master':
+            if message['detail']['referenceType'] == 'tag':
+               stage['actions'][0]['configuration']['ProjectName'] = 'android-release-aab-build' 
+            elif destination_branch == 'master':
                 stage['actions'][0]['configuration']['ProjectName'] = 'android-master-apk-build'
             else:
                 stage['actions'][0]['configuration']['ProjectName'] = 'android-develop-apk-build'
@@ -227,95 +351,106 @@ def branch_events(message, event_ytpe):
     code_pipeline_configuration = pipeline_configuration
     pipeline_name = branch_name + '-' + commit_id + '-pipeline'
     code_pipeline_configuration['pipeline']['name'] = pipeline_name
-    code_pipeline_configuration['pipeline']['stages'][2]['actions'][0]['configuration']['ObjectKey'] = commit_id
+    code_pipeline_configuration['pipeline']['stages'][3]['actions'][0]['configuration']['ObjectKey'] = commit_id
 
     if message['detail']['referenceType'] == 'tag':
+        code_pipeline_configuration = release_pipeline_configuration
+        code_pipeline_configuration['pipeline']['name'] = pipeline_name
         code_pipeline_configuration['pipeline']['stages'][2]['actions'][0]['configuration']['BucketName'] = s3_android_bucket_release
         # Use master branch for tags
         branch_ref = 'master'
-        global s3_android_bucket_builds
-        s3_android_bucket_builds = s3_android_bucket_release
 
-    modified_pipeline_json = update_pipeline(code_pipeline_configuration, branch_ref)
+    modified_pipeline_json = update_pipeline(message, code_pipeline_configuration, branch_ref)
 
     delete_pipeline(pipeline_name)
+
+    time.sleep(10)
     
     new_pipeline_response = create_pipeline(modified_pipeline_json)
 
-    time.sleep(10)
     
     pipeline_name = new_pipeline_response['pipeline']['name']
     pipeline_stages = get_status(pipeline_name)
 
     for stage in pipeline_stages['stageStates']:
-
+        
         if stage['stageName'] == 'Source':
-            source_execution_status = stage['actionStates'][0]['latestExecution']['status']
-            
-            if source_execution_status == 'Succeeded':
-                print('Stage Source Succeeded.')
-            else:
-                print('Stage Source Failed.')
-                break
+            count = 0
+            while count < 1000:
+                pipeline_source_status = get_status(pipeline_name)
+                try:
+                    source_execution_status = pipeline_source_status['stageStates'][0]['actionStates'][0]['latestExecution']['status']
+                    if source_execution_status == 'Succeeded':
+                        print('Stage Source Succeeded.')
+                        break
+                    elif source_execution_status == 'Failed':
+                        print('Stage Source Failed.')
+                        break
+                    else:
+                        count += 1
+                        time.sleep(2)
+                except KeyError:
+                    pass
 
         elif stage['stageName'] == 'Build':
-            build_url = stage['actionStates'][0]['latestExecution']['externalExecutionUrl']
             count = 0
             while count < 2000:
                 pipeline_build_status = get_status(pipeline_name)
-                build_execution_status = pipeline_build_status['stageStates'][1]['latestExecution']['status']
-                
-                if build_execution_status == 'Succeeded':
-                    print('Stage Build Succeeded.')
-                    print('Build URL :: {}'.format(build_url))
+                build_execution_status = pipeline_build_status['stageStates'][1]['actionStates'][0]['latestExecution']['status']
+                try:
+                    build_url = pipeline_build_status['stageStates'][1]['actionStates'][0]['latestExecution']['externalExecutionUrl']
+                    if build_execution_status == 'Succeeded':
+                        print('Stage Build Succeeded.')
+                        print('Build URL :: {}'.format(build_url))
+                        break
+                    elif build_execution_status == 'Failed':
+                        print('Stage Build Failed.')
+                        print('Failure Reason :: {}'.format(pipeline_build_status['stageStates'][1]['actionStates'][0]['latestExecution']['errorDetails']['message']))
+                        print('Build URL :: {}'.format(build_url))
+                        break
+                    else:
+                        count += 1
+                        time.sleep(2)
+                except KeyError:
+                    pass
+
+        elif stage['stageName'] == 'Test':
+            count = 0
+            while count < 500:
+                pipeline_test_status = get_status(pipeline_name)
+                test_execution_status = pipeline_test_status['stageStates'][2]['latestExecution']['status']
+                if test_execution_status == 'Succeeded':
+                    print('Stage '+pipeline_test_status['stageStates'][2]['actionStates'][0]['latestExecution']['summary'])
+                    devicefarm_url = pipeline_test_status['stageStates'][2]['actionStates'][0]['latestExecution']['externalExecutionUrl']
+                    print(devicefarm_url)
                     break
-                
-                elif build_execution_status == 'Failed':
-                    print('Stage Build Failed.')
-                    print('Failure Reason :: {}'.format(pipeline_build_status['stageStates'][1]['actionStates'][0]['latestExecution']['errorDetails']['message']))
-                    print('Build URL :: {}'.format(build_url))
+                elif test_execution_status == 'Failed':
+                    print('Stage Test failed')
                     break
-                
                 else:
                     count += 1
                     time.sleep(2)
 
         elif stage['stageName'] == 'Deploy':
             count = 0
-            while count < 500:
-                #try:
+            while count < 2000:
                 pipeline_deploy_status = get_status(pipeline_name)
-                deploy_execution_status = pipeline_deploy_status['stageStates'][2]['latestExecution']['status']
-                if deploy_execution_status == 'Succeeded':
-                    print('Stage '+pipeline_deploy_status['stageStates'][2]['actionStates'][0]['latestExecution']['summary'])
-                    build_path = pipeline_deploy_status['stageStates'][2]['actionStates'][0]['latestExecution']['externalExecutionId']
-                    apk_s3_location = 'https://'+region+'.console.aws.amazon.com/s3/buckets/'+s3_android_bucket_builds+'?region='+region+'&prefix='+commit_id+'/&showversions=false'
-                    print('Download APK file from :: {}'.format(apk_s3_location))
-                    break
-                elif deploy_execution_status == 'Failed':
-                    print('Stage Deploy failed')
-                    break
-                else:
-                    count += 1
-                    time.sleep(2)
-
-        elif stage['stageName'] == 'Test':
-            count = 0
-            while count < 500:
-                pipeline_test_status = get_status(pipeline_name)
-                test_execution_status = pipeline_test_status['stageStates'][3]['latestExecution']['status']
-                if test_execution_status == 'Succeeded':
-                    print('Stage '+pipeline_test_status['stageStates'][3]['actionStates'][0]['latestExecution']['summary'])
-                    devicefarm_url = pipeline_test_status['stageStates'][3]['actionStates'][0]['latestExecution']['externalExecutionUrl']
-                    print(devicefarm_url)
-                    break
-                elif test_execution_status == 'Failed':
-                    print('Stage Test failed')
-                    
-                    break
-                else:
-                    count += 1
-                    time.sleep(2)
+                try:
+                    deploy_execution_status = pipeline_deploy_status['stageStates'][3]['actionStates'][0]['latestExecution']['status']
+                    if deploy_execution_status == 'Succeeded':
+                        print('Stage '+pipeline_deploy_status['stageStates'][3]['actionStates'][0]['latestExecution']['summary'])
+                        build_path = pipeline_deploy_status['stageStates'][3]['actionStates'][0]['latestExecution']['externalExecutionId']
+                        apk_s3_location = 'https://'+region+'.console.aws.amazon.com/s3/buckets/'+s3_android_bucket_builds+'?region='+region+'&prefix='+commit_id+'/&showversions=false'
+                        print('Download APK file from :: {}'.format(apk_s3_location))
+                        break
+                    elif deploy_execution_status == 'Failed':
+                        print('Stage Deploy failed')
+                        break
+                    else:
+                        count += 1
+                        time.sleep(2)
+                except KeyError:
+                    pass
 
 
 # Pull Request Events Ex: pullRequestCreated, pullRequestSourceBranchUpdated
@@ -342,7 +477,7 @@ def pr_events(message, event_ytpe):
 
             code_pipeline_configuration = pipeline_configuration
             code_pipeline_configuration['pipeline']['name'] = pipeline_name
-            code_pipeline_configuration['pipeline']['stages'][2]['actions'][0]['configuration']['ObjectKey'] = source_commit
+            code_pipeline_configuration['pipeline']['stages'][3]['actions'][0]['configuration']['ObjectKey'] = source_commit
             
             modified_pipeline_json = update_pipeline(code_pipeline_configuration, branch_ref, destination_branch)
             
@@ -395,15 +530,37 @@ def pr_events(message, event_ytpe):
                         else:
                             count += 1
                             time.sleep(2)
+
+                elif stage['stageName'] == 'Test':
+                    count = 0
+                    while count < 500:
+                        pipeline_test_status = get_status(pipeline_name)
+                        test_execution_status = pipeline_test_status['stageStates'][2]['latestExecution']['status']
+                        if test_execution_status == 'Succeeded':
+                            summary = pipeline_test_status['stageStates'][2]['actionStates'][0]['latestExecution']['summary']
+                            print('Stage '+summary)
+                            devicefarm_url = pipeline_test_status['stageStates'][2]['actionStates'][0]['latestExecution']['externalExecutionUrl']
+                            print(devicefarm_url)
+                            content = u'\u2705'+' '+summary+' - See the logs [DeviceFarm]({0})'.format(devicefarm_url)
+                            post_comment(pr_id, repository_name,
+                                         source_commit, destination_commit,
+                                         content)
+                            break
+                        elif test_execution_status == 'Failed':
+                            print('Stage Deploy failed')
+                            break
+                        else:
+                            count += 1
+                            time.sleep(2)
                             
                 elif stage['stageName'] == 'Deploy':
                     count = 0
                     while count < 500:
                         pipeline_deploy_status = get_status(pipeline_name)
-                        deploy_execution_status = pipeline_deploy_status['stageStates'][2]['latestExecution']['status']
+                        deploy_execution_status = pipeline_deploy_status['stageStates'][3]['latestExecution']['status']
                         if deploy_execution_status == 'Succeeded':
-                            print('Stage '+pipeline_deploy_status['stageStates'][2]['actionStates'][0]['latestExecution']['summary'])
-                            build_path = pipeline_deploy_status['stageStates'][2]['actionStates'][0]['latestExecution']['externalExecutionId']
+                            print('Stage '+pipeline_deploy_status['stageStates'][3]['actionStates'][0]['latestExecution']['summary'])
+                            build_path = pipeline_deploy_status['stageStates'][3]['actionStates'][0]['latestExecution']['externalExecutionId']
                             print(build_path)
                             apk_s3_location = 'https://'+region+'.console.aws.amazon.com/s3/buckets/dt-android-builds?region='+region+'&prefix='+source_commit+'/&showversions=false'
                             print('Download APK file from :: {}'.format(apk_s3_location))
@@ -413,28 +570,6 @@ def pr_events(message, event_ytpe):
                                          content)
                             break
                         elif deploy_execution_status == 'Failed':
-                            print('Stage Deploy failed')
-                            break
-                        else:
-                            count += 1
-                            time.sleep(2)
-
-                elif stage['stageName'] == 'Test':
-                    count = 0
-                    while count < 500:
-                        pipeline_test_status = get_status(pipeline_name)
-                        test_execution_status = pipeline_test_status['stageStates'][3]['latestExecution']['status']
-                        if test_execution_status == 'Succeeded':
-                            summary = pipeline_test_status['stageStates'][3]['actionStates'][0]['latestExecution']['summary']
-                            print('Stage '+summary)
-                            devicefarm_url = pipeline_test_status['stageStates'][3]['actionStates'][0]['latestExecution']['externalExecutionUrl']
-                            print(devicefarm_url)
-                            content = u'\u2705'+' '+summary+' - See the logs [DeviceFarm]({0})'.format(devicefarm_url)
-                            post_comment(pr_id, repository_name,
-                                         source_commit, destination_commit,
-                                         content)
-                            break
-                        elif test_execution_status == 'Failed':
                             print('Stage Deploy failed')
                             break
                         else:
