@@ -11,22 +11,21 @@ codecommit_client = boto3.client('codecommit')
 codepipeline_client = boto3.client('codepipeline')
 codebuild_client = boto3.client('codebuild')
 
-# Repository name from codecommit
-repository_name = 'Dev-Dt-Android'
+# Repository name
+repository_name = ''
 
 # AWS account details
-account_number = '323144884758'
-role = 'codepipeline-android-service-role'
 region = 'ap-south-1'
+role = 'codepipeline-android-service-role'
 
 # S3 bucket to store Source and Build Artifacts
-s3_android_bucket_development = 'dt-android-source'
-s3_android_bucket_builds = 'dt-android-builds'
-s3_android_bucket_release = 'dt-android-release'
+s3_android_bucket_development = 'android-source'
+s3_android_bucket_builds = 'android-builds'
+s3_android_bucket_release = 'android-release'
 
 # DeviceFarm Project and DevicePool arn to test the application
-device_farm_project_id = '1637fcfa-4c58-421f-8343-0910238eae7b'
-device_farm_device_pool_arn = 'arn:aws:devicefarm:us-west-2::devicepool:082d10e5-d7d7-48a5-ba5c-b33d66efa1f5'
+device_farm_project_id = ''
+device_farm_device_pool_arn = ''
 
 pipeline_configuration = {
     "pipeline": {
@@ -131,7 +130,7 @@ pipeline_configuration = {
                         "name": "Deploy",
                         "configuration": {
                             "BucketName": s3_android_bucket_builds,
-                            "ObjectKey": "MyWebsite",
+                            "ObjectKey": "",
                             "Extract": "true"
                             },
                         "outputArtifacts": [],
@@ -150,9 +149,9 @@ pipeline_configuration = {
             "type": "S3",
             "location": s3_android_bucket_development
         },
-        "name": "ci-pipeline",
+        "name": "",
         "version": 1,
-        "roleArn": 'arn:aws:iam::'+account_number+':role/service-role/'+role
+        "roleArn": ""
     }
 }
 
@@ -228,7 +227,7 @@ release_pipeline_configuration = {
                         "name": "Deploy",
                         "configuration": {
                             "BucketName": s3_android_bucket_release,
-                            "ObjectKey": "MyWebsite",
+                            "ObjectKey": "",
                             "Extract": "true"
                             },
                         "outputArtifacts": [],
@@ -272,9 +271,9 @@ release_pipeline_configuration = {
             "type": "S3",
             "location": s3_android_bucket_development
         },
-        "name": "ci-pipeline",
+        "name": "",
         "version": 1,
-        "roleArn": 'arn:aws:iam::'+account_number+':role/service-role/'+role
+        "roleArn": ""
     }
 }
 
@@ -315,13 +314,19 @@ def update_pipeline(message, code_pipeline_configuration, branch_ref, destinatio
         if stage['name'] == 'Source':
             stage['actions'][0]['configuration']['BranchName'] = branch_ref
         elif stage['name'] == 'Build':
-            if message['detail']['referenceType'] == 'tag':
-               stage['actions'][0]['configuration']['ProjectName'] = 'android-release-aab-build' 
-            elif destination_branch == 'master':
-                stage['actions'][0]['configuration']['ProjectName'] = 'android-master-apk-build'
-            else:
-                stage['actions'][0]['configuration']['ProjectName'] = 'android-develop-apk-build'
-        
+            try:
+                if message['detail']['referenceType'] == 'tag':
+                    stage['actions'][0]['configuration']['ProjectName'] = 'android-release-aab-build'
+                    break
+            except KeyError:
+                pass
+            try:
+                if message['detail']['isMerged'] == 'True' and message['detail']['pullRequestStatus'] == 'Merged':
+                    stage['actions'][0]['configuration']['ProjectName'] = 'android-master-apk-build'
+                    break
+            except KeyError:
+                pass
+            stage['actions'][0]['configuration']['ProjectName'] = 'android-develop-apk-build'
     return code_pipeline_configuration['pipeline']
 
 
@@ -342,120 +347,52 @@ def get_pipeline_artifact(build_id):
 
 # Beanch Events Ex: referenceCreated, referenceDeleted, referenceUpdated 
 def branch_events(message, event_ytpe):
+    print(message)
+    account_number = message['account']
+    print("AWS Account number :: %s" % account_number)
+    region = message['region']
+    print("Region :: %s" % region)
+    repository_name = message['detail']['repositoryName']
+    print("Repository Name :: %s" % repository_name)
     commit_id = message['detail']['commitId']
     print("Commit ID :: %s" % commit_id)
     branch_ref = message['detail']['referenceName']
     branch_name = '-'.join(message['detail']['referenceName'].split('/'))
     print("Branch Name :: %s" % branch_ref)
     
+    # CodePipeline configurations for futurebranch/master
     code_pipeline_configuration = pipeline_configuration
-    pipeline_name = branch_name + '-' + commit_id + '-pipeline'
+    pipeline_name = branch_name+'-'+commit_id+'-pipeline'
     code_pipeline_configuration['pipeline']['name'] = pipeline_name
+    code_pipeline_configuration['pipeline']['roleArn'] = 'arn:aws:iam::'+account_number+':role/service-role/'+role
     code_pipeline_configuration['pipeline']['stages'][3]['actions'][0]['configuration']['ObjectKey'] = commit_id
+    
 
+    # CodePipeline configurations for tag creations
     if message['detail']['referenceType'] == 'tag':
         code_pipeline_configuration = release_pipeline_configuration
         code_pipeline_configuration['pipeline']['name'] = pipeline_name
-        code_pipeline_configuration['pipeline']['stages'][2]['actions'][0]['configuration']['BucketName'] = s3_android_bucket_release
+        code_pipeline_configuration['pipeline']['roleArn'] = 'arn:aws:iam::'+account_number+':role/service-role/'+role
+
         # Use master branch for tags
         branch_ref = 'master'
 
     modified_pipeline_json = update_pipeline(message, code_pipeline_configuration, branch_ref)
 
     delete_pipeline(pipeline_name)
-
-    time.sleep(10)
-    
+    time.sleep(5)
     new_pipeline_response = create_pipeline(modified_pipeline_json)
-
-    
-    pipeline_name = new_pipeline_response['pipeline']['name']
-    pipeline_stages = get_status(pipeline_name)
-
-    for stage in pipeline_stages['stageStates']:
-        
-        if stage['stageName'] == 'Source':
-            count = 0
-            while count < 1000:
-                pipeline_source_status = get_status(pipeline_name)
-                try:
-                    source_execution_status = pipeline_source_status['stageStates'][0]['actionStates'][0]['latestExecution']['status']
-                    if source_execution_status == 'Succeeded':
-                        print('Stage Source Succeeded.')
-                        break
-                    elif source_execution_status == 'Failed':
-                        print('Stage Source Failed.')
-                        break
-                    else:
-                        count += 1
-                        time.sleep(2)
-                except KeyError:
-                    pass
-
-        elif stage['stageName'] == 'Build':
-            count = 0
-            while count < 2000:
-                pipeline_build_status = get_status(pipeline_name)
-                build_execution_status = pipeline_build_status['stageStates'][1]['actionStates'][0]['latestExecution']['status']
-                try:
-                    build_url = pipeline_build_status['stageStates'][1]['actionStates'][0]['latestExecution']['externalExecutionUrl']
-                    if build_execution_status == 'Succeeded':
-                        print('Stage Build Succeeded.')
-                        print('Build URL :: {}'.format(build_url))
-                        break
-                    elif build_execution_status == 'Failed':
-                        print('Stage Build Failed.')
-                        print('Failure Reason :: {}'.format(pipeline_build_status['stageStates'][1]['actionStates'][0]['latestExecution']['errorDetails']['message']))
-                        print('Build URL :: {}'.format(build_url))
-                        break
-                    else:
-                        count += 1
-                        time.sleep(2)
-                except KeyError:
-                    pass
-
-        elif stage['stageName'] == 'Test':
-            count = 0
-            while count < 500:
-                pipeline_test_status = get_status(pipeline_name)
-                test_execution_status = pipeline_test_status['stageStates'][2]['latestExecution']['status']
-                if test_execution_status == 'Succeeded':
-                    print('Stage '+pipeline_test_status['stageStates'][2]['actionStates'][0]['latestExecution']['summary'])
-                    devicefarm_url = pipeline_test_status['stageStates'][2]['actionStates'][0]['latestExecution']['externalExecutionUrl']
-                    print(devicefarm_url)
-                    break
-                elif test_execution_status == 'Failed':
-                    print('Stage Test failed')
-                    break
-                else:
-                    count += 1
-                    time.sleep(2)
-
-        elif stage['stageName'] == 'Deploy':
-            count = 0
-            while count < 2000:
-                pipeline_deploy_status = get_status(pipeline_name)
-                try:
-                    deploy_execution_status = pipeline_deploy_status['stageStates'][3]['actionStates'][0]['latestExecution']['status']
-                    if deploy_execution_status == 'Succeeded':
-                        print('Stage '+pipeline_deploy_status['stageStates'][3]['actionStates'][0]['latestExecution']['summary'])
-                        build_path = pipeline_deploy_status['stageStates'][3]['actionStates'][0]['latestExecution']['externalExecutionId']
-                        apk_s3_location = 'https://'+region+'.console.aws.amazon.com/s3/buckets/'+s3_android_bucket_builds+'?region='+region+'&prefix='+commit_id+'/&showversions=false'
-                        print('Download APK file from :: {}'.format(apk_s3_location))
-                        break
-                    elif deploy_execution_status == 'Failed':
-                        print('Stage Deploy failed')
-                        break
-                    else:
-                        count += 1
-                        time.sleep(2)
-                except KeyError:
-                    pass
 
 
 # Pull Request Events Ex: pullRequestCreated, pullRequestSourceBranchUpdated
 def pr_events(message, event_ytpe):
     print(message)
+    account_number = message['account']
+    print("AWS Account number :: %s" % account_number)
+    region = message['region']
+    print("Region :: %s" % region)
+    repository_name = message['detail']['repositoryName']
+    print("Repository Name :: %s" % repository_name)
     pr_id = message['detail']['pullRequestId']
     print("Pull Request ID :: %s" % pr_id)
     source_commit = message['detail']['sourceCommit']
@@ -477,19 +414,20 @@ def pr_events(message, event_ytpe):
 
             code_pipeline_configuration = pipeline_configuration
             code_pipeline_configuration['pipeline']['name'] = pipeline_name
+            code_pipeline_configuration['pipeline']['roleArn'] = 'arn:aws:iam::'+account_number+':role/service-role/'+role
             code_pipeline_configuration['pipeline']['stages'][3]['actions'][0]['configuration']['ObjectKey'] = source_commit
             
-            modified_pipeline_json = update_pipeline(code_pipeline_configuration, branch_ref, destination_branch)
+            modified_pipeline_json = update_pipeline(message, code_pipeline_configuration, branch_ref, destination_branch)
             
             # Delete existing pipeline before creating new one
             delete_pipeline(pipeline_name)
+            time.sleep(5)
             new_pipeline_response = create_pipeline(modified_pipeline_json)
 
             pipeline_url = 'https://'+region+'.console.aws.amazon.com/codesuite/codepipeline/pipelines/'+pipeline_name+'/view?region='+region
             content = u'\u23F3'+' Pipeline started at {}'.format(datetime.datetime.utcnow().time())+' '+'- See the [Pipeline]({0})'.format(pipeline_url)
             post_comment(pr_id, repository_name, source_commit, destination_commit, content)
 
-            # TO-DO get the comment ID and use it to post all other status updates
             time.sleep(10)
 
             pipeline_name = new_pipeline_response['pipeline']['name']
