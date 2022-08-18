@@ -12,7 +12,7 @@ codepipeline_client = boto3.client('codepipeline')
 codebuild_client = boto3.client('codebuild')
 
 # Repository name
-repository_name = ''
+repository_name = 'Dev-Dt-Android'
 
 # AWS account details
 region = 'ap-south-1'
@@ -242,29 +242,44 @@ release_pipeline_configuration = {
                 "name": "Deploy"
             },
             {
+                "name": "Publish",
                 "actions": [
                     {
+                        "name": "ApprovalStage",
+                        "actionTypeId": {
+                            "category": "Approval",
+                            "owner": "AWS",
+                            "provider": "Manual",
+                            "version": "1"
+                        },
                         "runOrder": 1,
+                        "configuration": {
+                        },
+                        "outputArtifacts": [],
+                        "inputArtifacts": [],
+                        "region": region
+                    },
+                    {
+                        "name": "Publish-AAB-To-Playstore",
                         "actionTypeId": {
                             "category": "Invoke",
+                            "owner": "AWS",
                             "provider": "Lambda",
-                            "version": "1",
-                            "owner": "AWS"
+                            "version": "1"
                         },
-                        "name": "Publish-AAB-To-Playstore",
+                        "runOrder": 2,
                         "configuration": {
                             "FunctionName": "Publish-AAB-To-Playstore"
-                            },
+                        },
                         "outputArtifacts": [],
-                        "region": region,
                         "inputArtifacts": [
                             {
                                 "name": "BuildArtifact"
                             }
-                        ]
+                        ],
+                        "region": region
                     }
                 ],
-                "name": "Publish"
             },
         ],
         "artifactStore": {
@@ -321,7 +336,8 @@ def update_pipeline(message, code_pipeline_configuration, branch_ref, destinatio
             except KeyError:
                 pass
             try:
-                if message['detail']['isMerged'] == 'True' and message['detail']['pullRequestStatus'] == 'Merged':
+                #if message['detail']['isMerged'] == 'True' and message['detail']['pullRequestStatus'] == 'Merged':
+                if message['detail']['mergeOption'] == 'FAST_FORWARD_MERGE' and message['detail']['referenceName'] == 'master':
                     stage['actions'][0]['configuration']['ProjectName'] = 'android-master-apk-build'
                     break
             except KeyError:
@@ -352,8 +368,6 @@ def branch_events(message, event_ytpe):
     print("AWS Account number :: %s" % account_number)
     region = message['region']
     print("Region :: %s" % region)
-    repository_name = message['detail']['repositoryName']
-    print("Repository Name :: %s" % repository_name)
     commit_id = message['detail']['commitId']
     print("Commit ID :: %s" % commit_id)
     branch_ref = message['detail']['referenceName']
@@ -373,6 +387,7 @@ def branch_events(message, event_ytpe):
         code_pipeline_configuration = release_pipeline_configuration
         code_pipeline_configuration['pipeline']['name'] = pipeline_name
         code_pipeline_configuration['pipeline']['roleArn'] = 'arn:aws:iam::'+account_number+':role/service-role/'+role
+        code_pipeline_configuration['pipeline']['stages'][2]['actions'][0]['configuration']['ObjectKey'] = commit_id
 
         # Use master branch for tags
         branch_ref = 'master'
@@ -391,8 +406,7 @@ def pr_events(message, event_ytpe):
     print("AWS Account number :: %s" % account_number)
     region = message['region']
     print("Region :: %s" % region)
-    repository_name = message['detail']['repositoryName']
-    print("Repository Name :: %s" % repository_name)
+
     pr_id = message['detail']['pullRequestId']
     print("Pull Request ID :: %s" % pr_id)
     source_commit = message['detail']['sourceCommit']
