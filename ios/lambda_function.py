@@ -11,21 +11,20 @@ codecommit_client = boto3.client('codecommit')
 codepipeline_client = boto3.client('codepipeline')
 
 # Repository name from codecommit
-repository_name = ''
+repository_name = 'Dev-Dt-iOS'
 
 # AWS account details
-account_number = ''
 role = 'codepipeline-ios-service-role'
 region = 'ap-south-1'
 
 # S3 bucket to store Source and Build Artifacts
-s3_ios_bucket_development = 'ios-source'
-s3_ios_bucket_release = 'ios-release'
-s3_ios_bucket_builds = 'ios-builds'
+s3_ios_bucket_development = 'dt-ios-source'
+s3_ios_bucket_release = 'dt-ios-release'
+s3_ios_bucket_builds = 'dt-ios-builds'
 
 # DeviceFarm Project and DevicePool arn to test the application
-device_farm_project_id = ''
-device_farm_device_pool_arn = ''
+device_farm_project_id = '24810d78-548f-4e16-83c7-5c184af92bec'
+device_farm_device_pool_arn = 'arn:aws:devicefarm:us-west-2::devicepool:082d10e5-d7d7-48a5-ba5c-b33d66efa1f5'
 
 pipeline_configuration = {
     "pipeline": {
@@ -98,7 +97,7 @@ pipeline_configuration = {
                         "name": "Deploy",
                         "configuration": {
                             "BucketName": s3_ios_bucket_builds,
-                            "ObjectKey": "MyWebsite",
+                            "ObjectKey": "",
                             "Extract": "true"
                             },
                         "outputArtifacts": [],
@@ -117,9 +116,9 @@ pipeline_configuration = {
             "type": "S3",
             "location": s3_ios_bucket_development
         },
-        "name": "ci-pipeline",
+        "name": "",
         "version": 1,
-        "roleArn": 'arn:aws:iam::'+account_number+':role/service-role/'+role
+        "roleArn": ""
     }
 }
 
@@ -155,16 +154,25 @@ pipeline_configuration = {
 #                ]
 #            },
 
-def update_pipeline(code_pipeline_configuration, branch_ref, destination_branch=None):
+def update_pipeline(message, code_pipeline_configuration, branch_ref, destination_branch=None):
     for stage in code_pipeline_configuration['pipeline']['stages']:
         if stage['name'] == 'Source':
             stage['actions'][0]['configuration']['BranchName'] = branch_ref
         elif stage['name'] == 'Build':
-            if destination_branch == 'master':
-                stage['actions'][0]['configuration']['ProjectName'] = 'ios-master-ipa-build'
-            else:
-                stage['actions'][0]['configuration']['ProjectName'] = 'ios-develop-ipa-build'
-
+            try:
+                if message['detail']['referenceType'] == 'tag':
+                    stage['actions'][0]['configuration']['ProjectName'] = 'ios-release-ipa-build'
+                    break
+            except KeyError:
+                pass
+            try:
+                #if message['detail']['isMerged'] == 'True' and message['detail']['pullRequestStatus'] == 'Merged':
+                if message['detail']['mergeOption'] == 'FAST_FORWARD_MERGE' and message['detail']['referenceName'] == 'master':
+                    stage['actions'][0]['configuration']['ProjectName'] = 'ios-master-ipa-build'
+                    break
+            except KeyError:
+                pass
+            stage['actions'][0]['configuration']['ProjectName'] = 'ios-develop-ipa-build'
     return code_pipeline_configuration['pipeline']
 
 
@@ -203,7 +211,7 @@ def get_jenkins_build_number(pipeline_name):
             build_url = build_status['stageStates'][1]['actionStates'][0]['latestExecution']['externalExecutionUrl']
             break
         except KeyError:
-            print('Waiting for build status.')
+            print("Waiting for build status..!")
         count += 1
         time.sleep(2)
     return build_url
@@ -222,6 +230,9 @@ def post_comment(pr_id, repository_name, source_commit,
 
 # Beanch Events Ex: referenceCreated, referenceDeleted, referenceUpdated 
 def branch_events(message, event_ytpe):
+    print(message)
+    account_number = message['account']
+    print("AWS Account number :: %s" % account_number)
     commit_id = message['detail']['commitId']
     print("Commit ID :: %s" % commit_id)
     branch_ref = message['detail']['referenceName']
@@ -230,6 +241,7 @@ def branch_events(message, event_ytpe):
     branch_name = '-'.join(message['detail']['referenceName'].split('/'))
     code_pipeline_configuration = pipeline_configuration
     pipeline_name = branch_name + '-' + commit_id + '-pipeline'
+    code_pipeline_configuration['pipeline']['roleArn'] = 'arn:aws:iam::'+account_number+':role/service-role/'+role
     code_pipeline_configuration['pipeline']['stages'][2]['actions'][0]['configuration']['ObjectKey'] = commit_id
     
     code_pipeline_configuration['pipeline']['name'] = pipeline_name
@@ -241,93 +253,19 @@ def branch_events(message, event_ytpe):
         global s3_ios_bucket_builds
         s3_ios_bucket_builds = s3_ios_bucket_release
 
-    modified_pipeline_json = update_pipeline(code_pipeline_configuration, branch_ref)
+    modified_pipeline_json = update_pipeline(message, code_pipeline_configuration, branch_ref)
     
     # Delete existing pipeline before creating new one
     delete_pipeline(pipeline_name)
+    time.sleep(5)
     new_pipeline_response = create_pipeline(modified_pipeline_json)
-
-    time.sleep(10)
-
-    pipeline_name = new_pipeline_response['pipeline']['name']
-    pipeline_stages = get_status(pipeline_name)
-
-    for stage in pipeline_stages['stageStates']:
-
-        if stage['stageName'] == 'Source':
-            source_execution_status = stage['actionStates'][0]['latestExecution']['status']
-
-            if source_execution_status == 'Succeeded':
-                print('Stage Source Succeeded.')
-            else:
-                print('Stage Source Failed.')
-                break
-
-        elif stage['stageName'] == 'Build':
-            count = 0
-            while count < 2000:
-                pipeline_build_status = get_status(pipeline_name)
-                build_execution_status = pipeline_build_status['stageStates'][1]['latestExecution']['status']
-
-                if build_execution_status == 'Succeeded':
-                    print('Stage Jenkins Build Succeeded.')
-                    jenkins_build_id = get_jenkins_build_number(pipeline_name)
-                    print(jenkins_build_id)
-                    break
-
-                elif build_execution_status == 'Failed':
-                    print('Stage jenkins Build failed')
-                    jenkins_build_id = get_jenkins_build_number(pipeline_name)
-                    print(jenkins_build_id)
-                    break
-
-                else:
-                    count += 1
-                    time.sleep(2)
-
-        elif stage['stageName'] == 'Deploy':
-            count = 0
-            while count < 500:
-                pipeline_deploy_status = get_status(pipeline_name)
-                try:
-                    deploy_execution_status = pipeline_deploy_status['stageStates'][2]['latestExecution']['status']
-                except KeyError:
-                    print('Waiting for deploy status.')
-                if deploy_execution_status == 'Succeeded':
-                    print('Stage '+pipeline_deploy_status['stageStates'][2]['actionStates'][0]['latestExecution']['summary'])
-                    build_path = pipeline_deploy_status['stageStates'][2]['actionStates'][0]['latestExecution']['externalExecutionId']
-                    print(build_path)
-                    ipa_s3_location = 'https://'+region+'.console.aws.amazon.com/s3/buckets/'+s3_ios_bucket_builds+'?region='+region+'&prefix='+commit_id+'/&showversions=false'
-                    print('Download IPA file from :: {}'.format(ipa_s3_location))
-                    break
-                elif deploy_execution_status == 'Failed':
-                    print('Stage Deploy failed')
-                    break
-                else:
-                    count += 1
-                    time.sleep(2)
-
-        elif stage['stageName'] == 'Test':
-            count = 0
-            while count < 500:
-                pipeline_test_status = get_status(pipeline_name)
-                test_execution_status = pipeline_test_status['stageStates'][2]['latestExecution']['status']
-                if test_execution_status == 'Succeeded':
-                    print('Stage '+pipeline_test_status['stageStates'][2]['actionStates'][0]['latestExecution']['summary'])
-                    devicefarm_url = pipeline_test_status['stageStates'][2]['actionStates'][0]['latestExecution']['externalExecutionUrl']
-                    print(devicefarm_url)
-                    break
-                elif test_execution_status == 'Failed':
-                    print('Stage Test failed')
-                    break
-                else:
-                    count += 1
-                    time.sleep(2)
 
 
 # Pull Request Events Ex: pullRequestCreated, pullRequestSourceBranchUpdated
 def pr_events(message, event_ytpe):
     print(message)
+    account_number = message['account']
+    print("AWS Account number :: %s" % account_number)
     pr_id = message['detail']['pullRequestId']
     print("Pull Request ID :: %s" % pr_id)
     source_commit = message['detail']['sourceCommit']
@@ -352,9 +290,10 @@ def pr_events(message, event_ytpe):
 
             code_pipeline_configuration = pipeline_configuration
             code_pipeline_configuration['pipeline']['name'] = pipeline_name
+            code_pipeline_configuration['pipeline']['roleArn'] = 'arn:aws:iam::'+account_number+':role/service-role/'+role
             code_pipeline_configuration['pipeline']['stages'][2]['actions'][0]['configuration']['ObjectKey'] = source_commit
 
-            modified_pipeline_json = update_pipeline(code_pipeline_configuration, branch_ref, destination_branch)
+            modified_pipeline_json = update_pipeline(message, code_pipeline_configuration, branch_ref, destination_branch)
 
             new_pipeline_response = create_pipeline(modified_pipeline_json)
 
@@ -362,7 +301,6 @@ def pr_events(message, event_ytpe):
             content = u'\u23F3'+' Pipeline started at {}'.format(datetime.datetime.utcnow().time())+' '+'- See the [Pipeline]({0})'.format(pipeline_url)
             post_comment(pr_id, repository_name, source_commit, destination_commit, content)
 
-            # TO-DO get the comment ID and use it to post all other status updates
             time.sleep(5)
 
             pipeline_name = new_pipeline_response['pipeline']['name']
@@ -371,12 +309,20 @@ def pr_events(message, event_ytpe):
             for stage in pipeline_stages['stageStates']:
 
                 if stage['stageName'] == 'Source':
-                    source_execution_status = stage['actionStates'][0]['latestExecution']['status']
-                    if source_execution_status == 'Succeeded':
-                        print('Stage Source Passed.')
-                    else:
-                        print('Stage Source Failed.')
-                        break
+                    count = 0
+                    while count < 500:
+                        pipeline_source_status = get_status(pipeline_name)
+                        source_execution_status = pipeline_source_status['stageStates'][0]['latestExecution']['status']
+                        print('Source status :: ', source_execution_status)
+                        if source_execution_status == 'Succeeded':
+                            print('Stage Source Passed.')
+                            break
+                        elif source_execution_status == 'Failed':
+                            print('Stage Source Failed.')
+                            break
+                        else:
+                            count += 1
+                            time.sleep(2)
 
                 elif stage['stageName'] == 'Build':
                     count = 0
@@ -411,15 +357,16 @@ def pr_events(message, event_ytpe):
                         pipeline_deploy_status = get_status(pipeline_name)
                         try:
                             deploy_execution_status = pipeline_deploy_status['stageStates'][2]['latestExecution']['status']
+                            print('Deploy status :: ', deploy_execution_status)
                         except KeyError:
-                            print('Waiting for deploy status.')
+                            pass
                         if deploy_execution_status == 'Succeeded':
                             print('Stage '+pipeline_deploy_status['stageStates'][2]['actionStates'][0]['latestExecution']['summary'])
                             build_path = pipeline_deploy_status['stageStates'][2]['actionStates'][0]['latestExecution']['externalExecutionId']
                             print(build_path)
                             ipa_s3_location = 'https://'+region+'.console.aws.amazon.com/s3/buckets/dt-ios-builds?region='+region+'&prefix='+source_commit+'/&showversions=false'
                             print('Download IPA file from :: {}'.format(ipa_s3_location))
-                            ccontent = u'\u2705'+' Stage Deploy Passed - See the [Artifactory]({0})'.format(ipa_s3_location)
+                            content = u'\u2705'+' Stage Deploy Passed - See the [Artifactory]({0})'.format(ipa_s3_location)
                             post_comment(pr_id, repository_name,
                                          source_commit, destination_commit,
                                          content)
@@ -437,6 +384,7 @@ def lambda_handler(event, context):
     message = ast.literal_eval(event['Records'][0]['Sns']['Message'])
     event_type = message['detail']['event']
 
+    # Regardless of branch type, the CI Stage will always be created.
     if event_type == 'referenceCreated' or event_type == 'referenceUpdated':
         branch_events(message, event_type)
     elif event_type == 'pullRequestCreated' or event_type == 'pullRequestSourceBranchUpdated':
